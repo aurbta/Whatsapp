@@ -40,11 +40,11 @@ Set these in **Vercel → Project Settings → Environment Variables** (never in
 
 For automated delivery, create a campaign with an approved WhatsApp template name and the exact template language code (for example, `en_US`). The worker only claims due jobs for queued campaigns and contacts marked opted in, and it sends template messages only. If the campaign text includes `{{name}}`, the contact name is passed as the template's first body parameter. Attachments are not sent by this worker. Provider failures are recorded as failed jobs; check the dashboard and Vercel function logs before retrying.
 
-**This is infrastructure, not an active sender yet.** It requires valid Meta Business Platform credentials, approved templates, environment variables, and a successful production deployment. Vercel Cron runs every five minutes on plans that support that frequency; the Hobby plan only supports daily cron jobs, so a five-minute schedule will fail to deploy there. Cron times use UTC. Test with a small, consented recipient set before any wider use.
+**Current deployment state:** `CRON_SECRET`, `SUPABASE_URL`, and `WHATSAPP_GRAPH_API_VERSION=v26.0` are configured in Vercel Production. The worker is deployed, but automatic sends are not active because the Supabase service-role key, Meta access token, and WhatsApp Phone Number ID still need to be configured. The current Vercel Hobby cron is set to run daily at 03:00 UTC; this is not suitable for precise near-real-time scheduling. Plans supporting more frequent cron execution or a separate secure scheduler are needed for a faster queue. Test with a small, consented recipient set before any wider use.
 
 ## Automatic delivery status
 
-**Automatic WhatsApp delivery is not enabled.** Scheduling stores the intended time and the dashboard enforces it for manual handoff, but it does not run a background worker and does not send messages on its own. Automatic delivery requires an official WhatsApp Business Platform provider integration, server-side credentials stored as secrets, a delivery worker, and any required business/template approvals. Do not put provider secrets in browser code.
+**Automatic WhatsApp delivery is not active yet.** The deployed worker can send approved template messages through the official WhatsApp Cloud API once all required server-side credentials and Meta approvals are configured. Until then, queues remain pending and no WhatsApp messages are sent automatically. Never put provider secrets in browser code or share them in chat.
 
 The manual handoff only pre-fills text. Attachments must be added in WhatsApp manually. A click on the handoff button is not a delivery receipt.
 
