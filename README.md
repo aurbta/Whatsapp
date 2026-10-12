@@ -17,4 +17,5 @@ WhatsApp/SMS sending is intentionally disabled in Phase 1. This app prepares cam
 Tables: `mf_contacts`, `mf_campaigns`, `mf_attachments`, `mf_message_jobs`, and `mf_message_events`. Records are protected with owner-scoped Row Level Security. The `messageflow-attachments` Storage bucket is private, with a 20 MB file limit.
 
 ## Deployment
-The current preview is standalone and is not yet connected to this repository.
+Source repository: https://github.com/aurbta/Whatsapp
+Vercel project: `whatsapp`, connected to the `main` branch of this repository. Git-based deployments are enabled.
