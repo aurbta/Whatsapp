@@ -28,6 +28,31 @@ async function supabase(path, options = {}) {
   return data;
 }
 
+async function stopBatchAfterFailure(failedJob, failedIndex, batch, reason) {
+  const now = new Date().toISOString();
+  try {
+    await supabase(`mf_campaigns?id=eq.${encodeURIComponent(failedJob.campaign_id)}`, {
+      method: "PATCH",
+      headers: { prefer: "return=minimal" },
+      body: JSON.stringify({ status: "paused", updated_at: now }),
+    });
+  } catch (error) {
+    console.error("Could not pause campaign after a delivery error:", error.message);
+  }
+  const releaseNote = `Batch stopped after a delivery error. Review before resuming. First error: ${String(reason).slice(0, 700)}`;
+  for (const pending of batch.slice(failedIndex + 1)) {
+    try {
+      await supabase(`mf_message_jobs?id=eq.${encodeURIComponent(pending.job_id)}&status=eq.processing`, {
+        method: "PATCH",
+        headers: { prefer: "return=minimal" },
+        body: JSON.stringify({ status: "pending", last_error: releaseNote, finished_at: null, updated_at: now }),
+      });
+    } catch (error) {
+      console.error("Could not release unattempted job:", pending.job_id, error.message);
+    }
+  }
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "POST") {
     res.setHeader("Allow", "GET, POST");
@@ -49,7 +74,7 @@ module.exports = async function handler(req, res) {
   try {
     claimed = await supabase("rpc/mf_claim_due_template_jobs", {
       method: "POST",
-      body: JSON.stringify({ p_limit: 25 }),
+      body: JSON.stringify({ p_limit: 100 }),
     });
   } catch (error) {
     console.error("MessageFlow queue claim failed:", error.message);
@@ -57,7 +82,9 @@ module.exports = async function handler(req, res) {
   }
 
   const results = [];
-  for (const job of (claimed || [])) {
+  const batch = claimed || [];
+  for (let index = 0; index < batch.length; index++) {
+    const job = batch[index];
     try {
       const components = job.use_name && job.display_name
         ? [{ type: "body", parameters: [{ type: "text", text: String(job.display_name).slice(0, 1000) }] }]
@@ -88,14 +115,15 @@ module.exports = async function handler(req, res) {
       let body = {};
       try { body = bodyText ? JSON.parse(bodyText) : {}; } catch { body = {}; }
       if (!response.ok) {
-        const providerMessage = body?.error?.message || `WhatsApp provider returned ${response.status}`;
+        const providerMessage = String(body?.error?.message || `WhatsApp provider returned ${response.status}`).slice(0, 1000);
         await supabase(`mf_message_jobs?id=eq.${encodeURIComponent(job.job_id)}`, {
           method: "PATCH",
           headers: { prefer: "return=minimal" },
-          body: JSON.stringify({ status: "failed", last_error: String(providerMessage).slice(0, 1000), finished_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+          body: JSON.stringify({ status: "failed", last_error: providerMessage, finished_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
         });
-        results.push({ job_id: job.job_id, status: "failed" });
-        continue;
+        await stopBatchAfterFailure(job, index, batch, providerMessage);
+        results.push({ job_id: job.job_id, status: "failed", queue_paused: true });
+        break;
       }
       const providerId = body?.messages?.[0]?.id || null;
       await supabase(`mf_message_jobs?id=eq.${encodeURIComponent(job.job_id)}`, {
@@ -105,17 +133,20 @@ module.exports = async function handler(req, res) {
       });
       results.push({ job_id: job.job_id, status: "sent" });
     } catch (error) {
-      console.error("MessageFlow job failed:", job.job_id, error.message);
+      const message = String(error.message || "Worker error").slice(0, 1000);
+      console.error("MessageFlow job failed:", job.job_id, message);
       try {
         await supabase(`mf_message_jobs?id=eq.${encodeURIComponent(job.job_id)}`, {
           method: "PATCH",
           headers: { prefer: "return=minimal" },
-          body: JSON.stringify({ status: "failed", last_error: String(error.message || "Worker error").slice(0, 1000), finished_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+          body: JSON.stringify({ status: "failed", last_error: message, finished_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
         });
       } catch (updateError) {
         console.error("Could not update failed job:", updateError.message);
       }
-      results.push({ job_id: job.job_id, status: "failed" });
+      await stopBatchAfterFailure(job, index, batch, message);
+      results.push({ job_id: job.job_id, status: "failed", queue_paused: true });
+      break;
     }
   }
   return res.status(200).json({ claimed: (claimed || []).length, results });
